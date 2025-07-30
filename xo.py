@@ -1,137 +1,160 @@
 import streamlit as st
+import os
+import json
+import hashlib
+import uuid
 from datetime import datetime
 from deep_translator import GoogleTranslator
 from gtts import gTTS
-import uuid
-import os
 
-# Initialize session state storage
-if 'messages' not in st.session_state:
-    # messages stored as:
-    # { (user1, user2): [ {sender, message, time}, ... ] }
-    st.session_state.messages = {}
+# -------------------- File setup --------------------
+USER_FILE = "users.json"
+if not os.path.exists(USER_FILE):
+    with open(USER_FILE, "w") as f:
+        json.dump({}, f)
 
-if 'username' not in st.session_state:
+# -------------------- Helpers --------------------
+def load_users():
+    with open(USER_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(users):
+    with open(USER_FILE, "w") as f:
+        json.dump(users, f)
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+# -------------------- App State --------------------
+if "users" not in st.session_state:
+    st.session_state.users = load_users()
+
+if "username" not in st.session_state:
     st.session_state.username = None
 
-# Language options for translation and TTS
+if "messages" not in st.session_state:
+    st.session_state.messages = {}  # {("user1", "user2"): [msg_dict]}
+
+if "lang_pref" not in st.session_state:
+    st.session_state.lang_pref = "en"
+
+# -------------------- Language Options --------------------
 language_options = {
     'English': 'en',
     'French': 'fr',
     'Spanish': 'es',
     'German': 'de',
     'Arabic': 'ar',
-    'Chinese (Simplified)': 'zh-CN',
-    'Hindi': 'hi',
-    'Russian': 'ru',
+    'Chinese': 'zh-CN'
 }
 
-# ----- HEADER -----
-st.markdown(
-    """
-    <style>
-    .header {
-        background-color: #4CAF50;
-        padding: 20px;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        font-family: 'Poppins', sans-serif;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# -------------------- Auth --------------------
+def login():
+    st.header("🔐 Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        users = st.session_state.users
+        if username in users and users[username]["password"] == hash_password(password):
+            st.session_state.username = username
+            st.success(f"Welcome back, {username}!")
+            st.experimental_rerun()
+        else:
+            st.error("Invalid credentials")
 
-st.markdown('<div class="header"><h1>💬 Multilingual Private Chat App</h1></div>', unsafe_allow_html=True)
+def register():
+    st.header("📝 Register")
+    username = st.text_input("Choose username")
+    password = st.text_input("Choose password", type="password")
+    if st.button("Register"):
+        users = st.session_state.users
+        if username in users:
+            st.error("Username already exists")
+        else:
+            users[username] = {"password": hash_password(password)}
+            save_users(users)
+            st.session_state.users = users
+            st.success("Registered successfully! Now login.")
 
-# User login section
-if not st.session_state.username:
-    username = st.text_input("Enter your name to start chatting", max_chars=20)
-    if st.button("Set username") and username:
-        st.session_state.username = username.strip()
-        st.rerun()  # Rerun app after login to show chat UI
-    st.stop()  # stop further execution until username is set
+# -------------------- Chat Logic --------------------
+def get_chat_key(user1, user2):
+    return tuple(sorted([user1, user2]))
 
-# Sidebar info & controls
-st.sidebar.markdown(f"**Logged in as:** {st.session_state.username}")
-
-# User picks their interface language (used for translation and TTS)
-user_lang_name = st.sidebar.selectbox("Choose your interface language", list(language_options.keys()), index=0)
-user_lang_code = language_options[user_lang_name]
-
-# Gather all users seen so far from messages
-all_users = set()
-for chat_pair in st.session_state.messages.keys():
-    all_users.update(chat_pair)
-all_users.add(st.session_state.username)
-
-# Build list of possible chat partners excluding self
-user_list = sorted(u for u in all_users if u != st.session_state.username)
-if not user_list:
-    user_list = ["No other users yet"]
-
-chat_with = st.sidebar.selectbox("Chat with", user_list)
-
-if chat_with == "No other users yet":
-    st.info("Waiting for other users to join...")
-    st.stop()
-
-# Key for message storage is sorted tuple of the two usernames
-chat_key = tuple(sorted([st.session_state.username, chat_with]))
-if chat_key not in st.session_state.messages:
-    st.session_state.messages[chat_key] = []
-
-# Message input form
-with st.form("chat_form", clear_on_submit=True):
-    message = st.text_area("Type your message...", height=100)
-    submitted = st.form_submit_button("Send")
-
-    if submitted and message.strip():
-        timestamp = datetime.now().strftime("%H:%M")
-        st.session_state.messages[chat_key].append({
-            "sender": st.session_state.username,
-            "message": message.strip(),
-            "time": timestamp
-        })
-
-# Function to translate text (with fallback)
 def translate_text(text, target_lang):
     try:
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
-    except Exception:
+    except:
         return text
 
-# Display chat messages
-st.markdown(f"### Chat between **{st.session_state.username}** and **{chat_with}**:")
-
-for msg in st.session_state.messages[chat_key]:
-    sender = msg["sender"]
-    time = msg["time"]
-    original_text = msg["message"]
-
-    # Translate incoming messages to current user's chosen language
-    if sender != st.session_state.username:
-        display_text = translate_text(original_text, user_lang_code)
-    else:
-        display_text = original_text
-
-    # Message alignment and styling
-    if sender == st.session_state.username:
-        st.markdown(f"<p style='text-align: right;'><b>You [{time}]</b>: {display_text}</p>", unsafe_allow_html=True)
-    else:
-        st.markdown(f"<p style='text-align: left;'><b>{sender} [{time}]</b>: {display_text}</p>", unsafe_allow_html=True)
-
-    # Generate and play TTS audio for the displayed text
-    tts_filename = f"tts_{uuid.uuid4()}.mp3"
+def tts_audio(text, lang_code):
     try:
-        tts = gTTS(text=display_text, lang=user_lang_code)
-        tts.save(tts_filename)
-        audio_bytes = open(tts_filename, "rb").read()
-        st.audio(audio_bytes, format="audio/mp3")
+        tts = gTTS(text=text, lang=lang_code)
+        file = f"{uuid.uuid4()}.mp3"
+        tts.save(file)
+        audio = open(file, "rb").read()
+        os.remove(file)
+        return audio
     except Exception as e:
-        st.write(f"⚠️ Could not generate audio: {e}")
-    finally:
-        if os.path.exists(tts_filename):
-            os.remove(tts_filename)
+        st.error(f"TTS failed: {e}")
+        return None
+
+# -------------------- Main Chat App --------------------
+def chat_app():
+    st.sidebar.title("Chat Settings")
+    st.sidebar.markdown(f"👤 **Logged in as:** `{st.session_state.username}`")
+
+    lang_name = st.sidebar.selectbox("Your preferred language", list(language_options.keys()))
+    st.session_state.lang_pref = language_options[lang_name]
+
+    users = list(st.session_state.users.keys())
+    other_users = [u for u in users if u != st.session_state.username]
+
+    if not other_users:
+        st.warning("No other users available.")
+        return
+
+    chat_partner = st.sidebar.selectbox("Chat with", other_users)
+    chat_key = get_chat_key(st.session_state.username, chat_partner)
+
+    if chat_key not in st.session_state.messages:
+        st.session_state.messages[chat_key] = []
+
+    st.title(f"💬 Chat with {chat_partner}")
+
+    # Chat history
+    for msg in st.session_state.messages[chat_key]:
+        sender = msg["sender"]
+        time = msg["time"]
+        content = msg["message"]
+        lang = st.session_state.lang_pref
+        if sender != st.session_state.username:
+            content = translate_text(content, lang)
+
+        st.markdown(f"**{sender} [{time}]:** {content}")
+        audio = tts_audio(content, lang)
+        if audio:
+            st.audio(audio, format="audio/mp3")
+
+    # Message box
+    with st.form("chat_form", clear_on_submit=True):
+        new_msg = st.text_input("Type your message...")
+        send = st.form_submit_button("Send")
+        if send and new_msg:
+            st.session_state.messages[chat_key].append({
+                "sender": st.session_state.username,
+                "message": new_msg.strip(),
+                "time": datetime.now().strftime("%H:%M")
+            })
+
+    # Logout
+    if st.sidebar.button("Logout"):
+        for key in ["username", "lang_pref"]:
+            st.session_state.pop(key, None)
+        st.experimental_rerun()
+
+# -------------------- Run App --------------------
+if not st.session_state.username:
+    mode = st.radio("Select Action", ["Login", "Register"])
+    login() if mode == "Login" else register()
+else:
+    chat_app()
