@@ -71,7 +71,7 @@ if 'username' not in st.session_state:
     username = st.text_input("Enter your name to join", max_chars=20)
     if st.button("Join") and username.strip():
         st.session_state.username = username.strip()
-        st.experimental_rerun()
+        st.rerun()
     st.stop()
 
 username = st.session_state.username
