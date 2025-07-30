@@ -6,9 +6,9 @@ import uuid
 import os
 import json
 
-# ----------- Constants -----------
+# File paths for persistence (adjust as needed)
 CHAT_FILE = "chat_data.json"
-USER_FILE = "users.json"
+GUESTS_FILE = "guests.json"
 
 language_options = {
     'English': 'en',
@@ -19,9 +19,10 @@ language_options = {
     'Chinese (Simplified)': 'zh-CN',
     'Hindi': 'hi',
     'Russian': 'ru',
+    'Japanese': 'ja',
+    'Portuguese': 'pt',
 }
 
-# ----------- Load & Save Helpers -----------
 def load_json(path, default):
     if not os.path.exists(path):
         with open(path, "w") as f:
@@ -33,116 +34,116 @@ def save_json(path, data):
     with open(path, "w") as f:
         json.dump(data, f)
 
-# ----------- UI STYLES (Text: black, visible) -----------
+def chat_key(user1, user2):
+    # Sort usernames alphabetically so chat key is consistent
+    return "|".join(sorted([user1, user2]))
+
+# Header CSS styling
 st.markdown("""
 <style>
-body, p, div, span, label, h1, h2, h3, h4, h5, h6 {
-    color: #000 !important;
-    font-family: 'Poppins', sans-serif;
-}
-[data-testid="stMarkdownContainer"] {
-    background-color: white !important;
-}
 .header {
-    background-color: #e0e0e0;
+    background-color: #4CAF50;
     padding: 20px;
     border-radius: 10px;
-    color: black !important;
+    color: white;
     text-align: center;
     font-family: 'Poppins', sans-serif;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-}
-.stSidebar {
-    background-color: #f7f7f7 !important;
-    color: black !important;
-}
-input, textarea {
-    color: black !important;
-    background-color: #fff !important;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ----------- Header -----------
-st.markdown('<div class="header"><h2>💬 Multilingual Private Chat</h2></div>', unsafe_allow_html=True)
+st.markdown('<div class="header"><h1>💬 Multilingual Public Chat App</h1></div>', unsafe_allow_html=True)
 
-# ----------- Chat Data & User List -----------
-chat_data = load_json(CHAT_FILE, {})
-user_list = load_json(USER_FILE, [])
-
-# ----------- User Join Flow -----------
-if 'username' not in st.session_state:
-    username_input = st.text_input("Enter your name to join:", max_chars=20)
-    if st.button("Join") and username_input.strip():
-        username = username_input.strip()
+# Ask for username if not set
+if "username" not in st.session_state:
+    name = st.text_input("Enter your display name to start chatting", max_chars=20)
+    if st.button("Start Chatting") and name.strip():
+        username = name.strip()
+        # Add user to guest list
+        guests = load_json(GUESTS_FILE, [])
+        if username not in guests:
+            guests.append(username)
+            save_json(GUESTS_FILE, guests)
         st.session_state.username = username
-        if username not in user_list:
-            user_list.append(username)
-            save_json(USER_FILE, user_list)
+        st.rerun()
     else:
         st.stop()
 
 username = st.session_state.username
-st.sidebar.markdown(f"👤 Logged in as: `{username}`")
 
-# ----------- Language & Chat Partner -----------
-user_lang_name = st.sidebar.selectbox("Your language", list(language_options.keys()))
+# Load chat and guests data
+chat_data = load_json(CHAT_FILE, {})
+guests = load_json(GUESTS_FILE, [])
+
+# ---------- Sidebar ----------
+st.sidebar.markdown(f"👤 You are: **{username}**")
+
+# Audio toggle (default ON)
+audio_enabled = st.sidebar.checkbox("Enable Audio Playback", value=True)
+
+# Language selection for display and TTS
+user_lang_name = st.sidebar.selectbox("Choose your display language", list(language_options.keys()), index=0)
 user_lang_code = language_options[user_lang_name]
 
-available_users = [u for u in user_list if u != username]
+# Build list of other users to chat with
+available_users = [u for u in guests if u != username]
+
 if not available_users:
-    st.info("No one else has joined yet.")
+    st.sidebar.info("Waiting for other users to join...")
+
+chat_with = st.sidebar.selectbox("Chat with:", available_users if available_users else ["No users online"])
+
+if chat_with == "No users online":
+    st.info("No one else is online right now. Please wait for others to join.")
     st.stop()
-
-chat_with = st.sidebar.selectbox("Chat with:", available_users)
-
-# ----------- Chat Key Generator -----------
-def chat_key(user1, user2):
-    return "|".join(sorted([user1, user2]))
 
 key = chat_key(username, chat_with)
 if key not in chat_data:
     chat_data[key] = []
 
-# ----------- Display Chat Messages -----------
-st.markdown(f"### Chat with `{chat_with}`:")
+# ---------- Chat Display ----------
+st.markdown(f"## Chatting with **{chat_with}**")
 
 for msg in chat_data[key][-50:]:
     sender = msg["sender"]
     time = msg["time"]
-    content = msg["message"]
+    original_text = msg["message"]
 
-    # Translate if incoming
-    if sender != username:
-        try:
-            content = GoogleTranslator(source='auto', target=user_lang_code).translate(content)
-        except:
-            pass
+    # Translate all messages to user's chosen language
+    try:
+        displayed_text = GoogleTranslator(source='auto', target=user_lang_code).translate(original_text)
+    except Exception:
+        displayed_text = original_text
 
     align = "right" if sender == username else "left"
-    st.markdown(f"<p style='text-align:{align};'><b>{sender} [{time}]</b>: {content}</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align: {align}; color: black;'><b>{sender} [{time}]</b>: {displayed_text}</p>", unsafe_allow_html=True)
 
-    try:
-        tts = gTTS(text=content, lang=user_lang_code)
-        filename = f"tts_{uuid.uuid4()}.mp3"
-        tts.save(filename)
-        st.audio(open(filename, "rb").read(), format="audio/mp3")
-        os.remove(filename)
-    except:
-        pass
+    # Play audio only if enabled
+    if audio_enabled:
+        try:
+            tts = gTTS(text=displayed_text, lang=user_lang_code)
+            tts_filename = f"tts_{uuid.uuid4()}.mp3"
+            tts.save(tts_filename)
+            audio_bytes = open(tts_filename, "rb").read()
+            st.audio(audio_bytes, format="audio/mp3")
+        except Exception as e:
+            st.write(f"⚠️ Audio error: {e}")
+        finally:
+            if os.path.exists(tts_filename):
+                os.remove(tts_filename)
 
-# ----------- Message Form -----------
-with st.form("message_form", clear_on_submit=True):
-    new_msg = st.text_area("Type your message...", height=100)
-    send_btn = st.form_submit_button("Send")
-    if send_btn and new_msg.strip():
+# ---------- Message Input ----------
+with st.form("chat_form", clear_on_submit=True):
+    new_msg = st.text_area("Your message:", height=100)
+    send = st.form_submit_button("Send")
+
+    if send and new_msg.strip():
         chat_data[key].append({
             "sender": username,
             "message": new_msg.strip(),
             "time": datetime.now().strftime("%H:%M")
         })
         save_json(CHAT_FILE, chat_data)
-
-# ----------- Leave Button -----------
-if st.sidebar.button("🚪 Leave Chat"):
-    del st.session_state.username
+        st.rerun()
