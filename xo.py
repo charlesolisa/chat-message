@@ -5,22 +5,24 @@ from gtts import gTTS
 import uuid
 import os
 import json
-import re
 
-# ------------------ File Paths ------------------
-USERS_FILE = "users.json"
+# File paths for persistence (adjust as needed)
 CHAT_FILE = "chat_data.json"
-GROUPS_FILE = "groups.json"
-UNREAD_FILE = "unread.json"
+GUESTS_FILE = "guests.json"
 
-# ------------------ Language Options ------------------
 language_options = {
-    'English': 'en', 'French': 'fr', 'Spanish': 'es', 'German': 'de',
-    'Arabic': 'ar', 'Chinese (Simplified)': 'zh-CN', 'Hindi': 'hi',
-    'Russian': 'ru', 'Portuguese': 'pt', 'Japanese': 'ja'
+    'English': 'en',
+    'French': 'fr',
+    'Spanish': 'es',
+    'German': 'de',
+    'Arabic': 'ar',
+    'Chinese (Simplified)': 'zh-CN',
+    'Hindi': 'hi',
+    'Russian': 'ru',
+    'Japanese': 'ja',
+    'Portuguese': 'pt',
 }
 
-# ------------------ JSON Helpers ------------------
 def load_json(path, default):
     if not os.path.exists(path):
         with open(path, "w") as f:
@@ -30,201 +32,118 @@ def load_json(path, default):
 
 def save_json(path, data):
     with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f)
 
-# ------------------ Load Data ------------------
-users = load_json(USERS_FILE, [])
-chat_data = load_json(CHAT_FILE, {})
-groups = load_json(GROUPS_FILE, {})
-unread_data = load_json(UNREAD_FILE, {})
+def chat_key(user1, user2):
+    # Sort usernames alphabetically so chat key is consistent
+    return "|".join(sorted([user1, user2]))
 
-# ------------------ UI Styles ------------------
+# Header CSS styling
 st.markdown("""
 <style>
 .header {
-    background-color: #4caf50;
+    background-color: #4CAF50;
     padding: 20px;
     border-radius: 10px;
     color: white;
     text-align: center;
-    font-size: 24px;
-    font-weight: bold;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    font-family: 'Poppins', sans-serif;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     margin-bottom: 20px;
 }
 </style>
 """, unsafe_allow_html=True)
-st.markdown('<div class="header">🌐 Multilingual Chat App</div>', unsafe_allow_html=True)
 
-# ------------------ Name Validation ------------------
-def is_valid_name(name):
-    return bool(re.match(r'^[A-Za-z]+$', name.strip()))
+st.markdown('<div class="header"><h1>💬 Multilingual Public Chat App</h1></div>', unsafe_allow_html=True)
 
-# ------------------ Login ------------------
-if "user_info" not in st.session_state:
-    st.subheader("🔐 Join the Chat")
-    first_name = st.text_input("First Name")
-    last_name = st.text_input("Last Name")
-    country = st.text_input("Country")
-
-    if st.button("Join"):
-        if not all([first_name, last_name, country]):
-            st.warning("Please fill in all fields.")
-            st.stop()
-        if not is_valid_name(first_name) or not is_valid_name(last_name):
-            st.error("Names must only contain letters.")
-            st.stop()
-        full_name = f"{first_name.strip()} {last_name.strip()} ({country.strip()})"
-        if full_name in users:
-            st.error("This name is already taken.")
-            st.stop()
-
-        users.append(full_name)
-        save_json(USERS_FILE, users)
-        st.session_state.user_info = {
-            "username": full_name,
-            "first_name": first_name,
-            "last_name": last_name,
-            "country": country
-        }
+# Ask for username if not set
+if "username" not in st.session_state:
+    name = st.text_input("Enter your display name to start chatting", max_chars=20)
+    if st.button("Start Chatting") and name.strip():
+        username = name.strip()
+        # Add user to guest list
+        guests = load_json(GUESTS_FILE, [])
+        if username not in guests:
+            guests.append(username)
+            save_json(GUESTS_FILE, guests)
+        st.session_state.username = username
         st.rerun()
+    else:
+        st.stop()
+
+username = st.session_state.username
+
+# Load chat and guests data
+chat_data = load_json(CHAT_FILE, {})
+guests = load_json(GUESTS_FILE, [])
+
+# ---------- Sidebar ----------
+st.sidebar.markdown(f"👤 You are: **{username}**")
+
+# Audio toggle (default ON)
+audio_enabled = st.sidebar.checkbox("Enable Audio Playback", value=True)
+
+# Language selection for display and TTS
+user_lang_name = st.sidebar.selectbox("Choose your display language", list(language_options.keys()), index=0)
+user_lang_code = language_options[user_lang_name]
+
+# Build list of other users to chat with
+available_users = [u for u in guests if u != username]
+
+if not available_users:
+    st.sidebar.info("Waiting for other users to join...")
+
+chat_with = st.sidebar.selectbox("Chat with:", available_users if available_users else ["No users online"])
+
+if chat_with == "No users online":
+    st.info("No one else is online right now. Please wait for others to join.")
     st.stop()
 
-username = st.session_state.user_info["username"]
+key = chat_key(username, chat_with)
+if key not in chat_data:
+    chat_data[key] = []
 
-# ------------------ Chat Mode Select ------------------
-if "chat_mode" not in st.session_state:
-    st.subheader("💬 Select Chat Mode")
-    chat_mode = st.radio("Choose chat type:", ["Public Chat", "Private Chat"])
-    if st.button("Continue"):
-        st.session_state.chat_mode = chat_mode
-        st.rerun()
-    st.stop()
+# ---------- Chat Display ----------
+st.markdown(f"## Chatting with **{chat_with}**")
 
-# ------------------ Sidebar ------------------
-st.sidebar.title("📋 Sidebar")
-st.sidebar.markdown(f"👤 You: **{username}**")
-st.sidebar.markdown(f"🌍 Country: **{st.session_state.user_info['country']}**")
+for msg in chat_data[key][-50:]:
+    sender = msg["sender"]
+    time = msg["time"]
+    original_text = msg["message"]
 
-# Switch Chat Mode
-st.sidebar.markdown("---")
-st.sidebar.subheader("💡 Chat Mode")
-if st.sidebar.button("🔄 Switch Chat Mode"):
-    current = st.session_state.chat_mode
-    st.session_state.chat_mode = "Private Chat" if current == "Public Chat" else "Public Chat"
-    st.rerun()
+    # Translate all messages to user's chosen language
+    try:
+        displayed_text = GoogleTranslator(source='auto', target=user_lang_code).translate(original_text)
+    except Exception:
+        displayed_text = original_text
 
-# Language and Audio
-audio_enabled = st.sidebar.checkbox("Enable Audio", value=True)
-lang_name = st.sidebar.selectbox("Interface Language", list(language_options.keys()))
-lang_code = language_options[lang_name]
+    align = "right" if sender == username else "left"
+    st.markdown(f"<p style='text-align: {align}; color: black;'><b>{sender} [{time}]</b>: {displayed_text}</p>", unsafe_allow_html=True)
 
-# Group Creation
-if st.session_state.chat_mode == "Public Chat":
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("➕ Create Group")
-    group_name = st.sidebar.text_input("Group Name")
-    group_members = st.sidebar.multiselect("Select Members", users, default=[username])
-    if st.sidebar.button("Create Group"):
-        if group_name and group_members:
-            groups[group_name] = group_members
-            chat_data[f"group|{group_name}"] = []
-            save_json(GROUPS_FILE, groups)
-            save_json(CHAT_FILE, chat_data)
-            st.sidebar.success(f"Group '{group_name}' created.")
+    # Play audio only if enabled
+    if audio_enabled:
+        try:
+            tts = gTTS(text=displayed_text, lang=user_lang_code)
+            tts_filename = f"tts_{uuid.uuid4()}.mp3"
+            tts.save(tts_filename)
+            audio_bytes = open(tts_filename, "rb").read()
+            st.audio(audio_bytes, format="audio/mp3")
+        except Exception as e:
+            st.write(f"⚠️ Audio error: {e}")
+        finally:
+            if os.path.exists(tts_filename):
+                os.remove(tts_filename)
 
-# Delete Contact or Group
-st.sidebar.markdown("---")
-if st.session_state.chat_mode == "Private Chat":
-    st.sidebar.subheader("❌ Delete Contact")
-    contacts = [u for u in users if u != username]
-    contact_to_remove = st.sidebar.selectbox("Select contact to remove", contacts)
-    if st.sidebar.button("Remove Contact"):
-        confirm = st.sidebar.checkbox("Confirm removal")
-        if confirm:
-            chat_key = "|".join(sorted([username, contact_to_remove]))
-            chat_data.pop(chat_key, None)
-            unread_data.pop(chat_key, None)
-            if contact_to_remove in users:
-                users.remove(contact_to_remove)
-            save_json(USERS_FILE, users)
-            save_json(CHAT_FILE, chat_data)
-            save_json(UNREAD_FILE, unread_data)
-            st.sidebar.success(f"Contact '{contact_to_remove}' removed.")
-            st.rerun()
-else:
-    st.sidebar.subheader("🗑️ Delete Group Chat")
-    group_chats = [f"group|{g}" for g in groups if username in groups[g]]
-    chat_to_delete = st.sidebar.selectbox("Select group to delete", group_chats)
-    if st.sidebar.button("Delete Group"):
-        confirm = st.sidebar.checkbox("Confirm deletion")
-        if confirm:
-            group_name = chat_to_delete.split("|")[1]
-            groups.pop(group_name, None)
-            chat_data.pop(chat_to_delete, None)
-            unread_data.pop(chat_to_delete, None)
-            save_json(GROUPS_FILE, groups)
-            save_json(CHAT_FILE, chat_data)
-            save_json(UNREAD_FILE, unread_data)
-            st.sidebar.success(f"Group '{group_name}' deleted.")
-            st.rerun()
+# ---------- Message Input ----------
+with st.form("chat_form", clear_on_submit=True):
+    new_msg = st.text_area("Your message:", height=100)
+    send = st.form_submit_button("Send")
 
-# ------------------ Chat List ------------------
-st.sidebar.markdown("---")
-st.sidebar.subheader("💬 Chats")
-if st.session_state.chat_mode == "Private Chat":
-    all_chats = [f"user|{u}" for u in users if u != username]
-else:
-    all_chats = [f"group|{g}" for g in groups if username in groups[g]]
-
-selected_chat = None
-for chat_id in all_chats:
-    label = f"👤 {chat_id.split('|')[1]}" if chat_id.startswith("user|") else f"👥 {chat_id.split('|')[1]}"
-    unread = unread_data.get(chat_id, {}).get(username, 0)
-    label += f" 🔔" if unread else ""
-    if st.sidebar.button(label):
-        selected_chat = chat_id
-
-if not selected_chat:
-    st.warning("Please select a chat.")
-    st.stop()
-
-# ------------------ Chat Setup ------------------
-chat_key = ""
-chat_members = []
-if selected_chat.startswith("group|"):
-    group_name = selected_chat.split("|")[1]
-    chat_key = f"group|{group_name}"
-    chat_members = groups.get(group_name, [])
-    chat_title = f"Group Chat: {group_name}"
-else:
-    partner = selected_chat.split("|")[1]
-    chat_key = "|".join(sorted([username, partner]))
-    chat_members = [username, partner]
-    chat_title = f"Private Chat with {partner}"
-
-if chat_key not in chat_data:
-    chat_data[chat_key] = []
-
-# ------------------ Leave Chat Button ------------------
-st.markdown("---")
-if selected_chat.startswith("group|"):
-    if st.button("🚪 Leave Group"):
-        group_name = selected_chat.split("|")[1]
-        if group_name in groups:
-            groups[group_name] = [u for u in groups[group_name] if u != username]
-            save_json(GROUPS_FILE, groups)
-            if not groups[group_name]:
-                groups.pop(group_name, None)
-                chat_data.pop(f"group|{group_name}", None)
-            save_json(CHAT_FILE, chat_data)
-            st.success("You left the group.")
-            st.rerun()
-else:
-    if st.button("🚪 End Private Chat"):
-        partner = selected_chat.split("|")[1]
-        chat_key = "|".join(sorted([username, partner]))
-        chat_data.pop(chat_key, None)
-        unread_data.pop(chat_key, None)
+    if send and new_msg.strip():
+        chat_data[key].append({
+            "sender": username,
+            "message": new_msg.strip(),
+            "time": datetime.now().strftime("%H:%M")
+        })
         save_json(CHAT_FILE, chat_data)
-        save_json()
+        st.rerun()
