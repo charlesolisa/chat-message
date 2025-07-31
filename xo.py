@@ -6,7 +6,6 @@ import uuid
 import os
 import json
 
-# File paths for persistence (adjust as needed)
 CHAT_FILE = "chat_data.json"
 GUESTS_FILE = "guests.json"
 
@@ -35,10 +34,8 @@ def save_json(path, data):
         json.dump(data, f)
 
 def chat_key(user1, user2):
-    # Sort usernames alphabetically so chat key is consistent
     return "|".join(sorted([user1, user2]))
 
-# Header CSS styling
 st.markdown("""
 <style>
 .header {
@@ -51,17 +48,24 @@ st.markdown("""
     box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     margin-bottom: 20px;
 }
+.sidebar-badge {
+    color: white;
+    background-color: red;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    margin-left: 5px;
+}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="header"><h1>💬 Multilingual Public Chat App</h1></div>', unsafe_allow_html=True)
 
-# Ask for username if not set
+# ----------- USERNAME ENTRY ----------
 if "username" not in st.session_state:
     name = st.text_input("Enter your display name to start chatting", max_chars=20)
     if st.button("Start Chatting") and name.strip():
         username = name.strip()
-        # Add user to guest list
         guests = load_json(GUESTS_FILE, [])
         if username not in guests:
             guests.append(username)
@@ -72,46 +76,58 @@ if "username" not in st.session_state:
         st.stop()
 
 username = st.session_state.username
-
-# Load chat and guests data
 chat_data = load_json(CHAT_FILE, {})
 guests = load_json(GUESTS_FILE, [])
 
-# ---------- Sidebar ----------
+# ---------- SIDEBAR ----------
 st.sidebar.markdown(f"👤 You are: **{username}**")
-
-# Audio toggle (default ON)
 audio_enabled = st.sidebar.checkbox("Enable Audio Playback", value=True)
-
-# Language selection for display and TTS
 user_lang_name = st.sidebar.selectbox("Choose your display language", list(language_options.keys()), index=0)
 user_lang_code = language_options[user_lang_name]
 
-# Build list of other users to chat with
 available_users = [u for u in guests if u != username]
-
 if not available_users:
     st.sidebar.info("Waiting for other users to join...")
 
-chat_with = st.sidebar.selectbox("Chat with:", available_users if available_users else ["No users online"])
+# ----------- NOTIFICATION SYSTEM ----------
+if "last_seen_times" not in st.session_state:
+    st.session_state.last_seen_times = {}
+
+chat_badges = {}
+for other_user in available_users:
+    key = chat_key(username, other_user)
+    chat_history = chat_data.get(key, [])
+    last_seen = st.session_state.last_seen_times.get(key, "")
+    if chat_history:
+        latest_msg = chat_history[-1]
+        if latest_msg["sender"] != username and latest_msg["time"] != last_seen:
+            chat_badges[other_user] = True  # new unseen message
+
+# Show badge if unread messages exist
+def display_user(user):
+    return f"{user} 🔴" if chat_badges.get(user) else user
+
+chat_with = st.sidebar.selectbox("Chat with:", [display_user(u) for u in available_users] if available_users else ["No users online"])
 
 if chat_with == "No users online":
     st.info("No one else is online right now. Please wait for others to join.")
     st.stop()
 
+# Remove badge suffix to get actual username
+chat_with = chat_with.replace(" 🔴", "")
 key = chat_key(username, chat_with)
+
 if key not in chat_data:
     chat_data[key] = []
 
-# ---------- Chat Display ----------
 st.markdown(f"## Chatting with **{chat_with}**")
 
+# ---------- CHAT DISPLAY ----------
+latest_msg_time = ""
 for msg in chat_data[key][-50:]:
     sender = msg["sender"]
     time = msg["time"]
     original_text = msg["message"]
-
-    # Translate all messages to user's chosen language
     try:
         displayed_text = GoogleTranslator(source='auto', target=user_lang_code).translate(original_text)
     except Exception:
@@ -120,7 +136,6 @@ for msg in chat_data[key][-50:]:
     align = "right" if sender == username else "left"
     st.markdown(f"<p style='text-align: {align}; color: black;'><b>{sender} [{time}]</b>: {displayed_text}</p>", unsafe_allow_html=True)
 
-    # Play audio only if enabled
     if audio_enabled:
         try:
             tts = gTTS(text=displayed_text, lang=user_lang_code)
@@ -133,8 +148,13 @@ for msg in chat_data[key][-50:]:
         finally:
             if os.path.exists(tts_filename):
                 os.remove(tts_filename)
+    
+    latest_msg_time = time
 
-# ---------- Message Input ----------
+# ----------- UPDATE LAST SEEN TIME ----------
+st.session_state.last_seen_times[key] = latest_msg_time
+
+# ---------- MESSAGE INPUT ----------
 with st.form("chat_form", clear_on_submit=True):
     new_msg = st.text_area("Your message:", height=100)
     send = st.form_submit_button("Send")
