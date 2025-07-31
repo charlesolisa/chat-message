@@ -94,12 +94,33 @@ class DatabaseManager:
         finally:
             conn.close()
     
-    def add_user(self, username: str, preferred_language: str = 'en') -> bool:
-        """Add or update user"""
+    def check_user_exists(self, username: str) -> bool:
+        """Check if username already exists and is currently active"""
         try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                # Check if user exists and was active in last 2 minutes (currently using the app)
+                cutoff_time = datetime.now() - timedelta(minutes=2)
+                cursor.execute('''
+                    SELECT username FROM users 
+                    WHERE username = ? AND last_seen > ?
+                ''', (username, cutoff_time))
+                return cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Error checking user existence: {e}")
+            return False
+    
+    def add_user(self, username: str, preferred_language: str = 'en') -> bool:
+        """Add new user (only if username is not currently active)"""
+        try:
+            # Check if user is currently active
+            if self.check_user_exists(username):
+                return False  # User already exists and is active
+            
             with self.lock:
                 with self._get_connection() as conn:
                     cursor = conn.cursor()
+                    # Insert or update user
                     cursor.execute('''
                         INSERT OR REPLACE INTO users (username, last_seen, preferred_language)
                         VALUES (?, CURRENT_TIMESTAMP, ?)
@@ -110,8 +131,8 @@ class DatabaseManager:
             logger.error(f"Error adding user {username}: {e}")
             return False
     
-    def get_active_users(self, minutes: int = 30) -> List[str]:
-        """Get users active within specified minutes"""
+    def get_active_users(self, minutes: int = 2) -> List[str]:
+        """Get users active within specified minutes (currently using the app)"""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
@@ -146,8 +167,8 @@ class DatabaseManager:
             with self.lock:
                 with self._get_connection() as conn:
                     cursor = conn.cursor()
-                    # Set last_seen to 2 hours ago to effectively "log out" the user
-                    past_time = datetime.now() - timedelta(hours=2)
+                    # Set last_seen to 5 minutes ago to effectively "log out" the user
+                    past_time = datetime.now() - timedelta(minutes=5)
                     cursor.execute('''
                         UPDATE users SET last_seen = ? 
                         WHERE username = ?
@@ -301,10 +322,12 @@ def chat_key(user1: str, user2: str) -> str:
     return "|".join(sorted([user1, user2]))
 
 def sanitize_input(text: str) -> str:
-    """Sanitize user input"""
+    """Sanitize user input - only allow first name (single word)"""
     # Remove potentially harmful characters and limit length
     text = re.sub(r'[<>"\']', '', text)
-    return text[:MAX_MESSAGE_LENGTH].strip()
+    # Extract only the first word (first name only)
+    first_word = text.split()[0] if text.split() else ""
+    return first_word[:20].strip()  # Limit to 20 characters for first name
 
 def translate_text(text: str, target_lang: str, cache: TranslationCache) -> str:
     """Translate text with caching"""
@@ -403,7 +426,8 @@ def main():
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            name = st.text_input("📝 Display Name", max_chars=20, placeholder="Enter your name...")
+            name = st.text_input("📝 First Name Only", max_chars=20, placeholder="Enter your first name...")
+            st.caption("*Only your first name is allowed - no spaces or multiple words*")
         
         with col2:
             preferred_lang = st.selectbox("🌐 Preferred Language", list(LANGUAGE_OPTIONS.keys()))
@@ -411,14 +435,19 @@ def main():
         if st.button("🚀 Start Chatting", type="primary") and name.strip():
             username = sanitize_input(name)
             if len(username) >= 2:
-                if db_manager.add_user(username, LANGUAGE_OPTIONS[preferred_lang]):
+                # Check if username is already taken by an active user
+                if db_manager.check_user_exists(username):
+                    st.error(f"❌ Username '{username}' is already in use by someone currently active. Please choose a different name.")
+                elif db_manager.add_user(username, LANGUAGE_OPTIONS[preferred_lang]):
                     st.session_state.username = username
                     st.session_state.preferred_language = preferred_lang
+                    st.success(f"✅ Welcome {username}! Joining the chat...")
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Error creating user. Please try again.")
             else:
-                st.error("Username must be at least 2 characters long.")
+                st.error("First name must be at least 2 characters long.")
         st.stop()
     
     username = st.session_state.username
@@ -463,16 +492,18 @@ def main():
         
         # Active users
         st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
-        st.markdown("### 👥 Active Users")
+        st.markdown("### 👥 Currently Active Users")
         
         active_users = db_manager.get_active_users()
         available_users = [u for u in active_users if u != username]
         
         if available_users:
-            for user in available_users[:10]:  # Show max 10 users
+            st.markdown(f"**{len(active_users)} users online now:**")
+            for user in available_users[:15]:  # Show max 15 users
                 st.markdown(f'<span class="online-indicator">🟢</span> {user}', unsafe_allow_html=True)
         else:
-            st.info("No other users online")
+            st.info("🔍 No other users online right now")
+            st.markdown("*Users shown here are actively using the app*")
         
         st.markdown('</div>', unsafe_allow_html=True)
         
