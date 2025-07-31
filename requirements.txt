@@ -1,3 +1,28 @@
-streamlit
-deep-translator
-gtts
+# Core Streamlit framework
+streamlit>=1.28.0
+
+# Translation services
+deep-translator>=1.11.4
+
+# Text-to-speech functionality
+gTTS>=2.4.0
+
+# Async file operations
+aiofiles>=23.2.0
+
+# Audio processing (optional, for enhanced audio features)
+pydub>=0.25.1
+
+# Additional utilities
+requests>=2.31.0
+urllib3>=2.0.0
+
+# Development and testing (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Performance monitoring (optional)
+psutil>=5.9.0
+
+# Enhanced logging (optional)
+colorlog>=6.7.0
