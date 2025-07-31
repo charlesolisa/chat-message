@@ -140,6 +140,24 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error updating activity for {username}: {e}")
     
+    def remove_user(self, username: str) -> bool:
+        """Remove user from active users (set last_seen to past)"""
+        try:
+            with self.lock:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    # Set last_seen to 2 hours ago to effectively "log out" the user
+                    past_time = datetime.now() - timedelta(hours=2)
+                    cursor.execute('''
+                        UPDATE users SET last_seen = ? 
+                        WHERE username = ?
+                    ''', (past_time, username))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            logger.error(f"Error removing user {username}: {e}")
+            return False
+    
     def add_message(self, chat_key: str, sender: str, message: str, original_language: str = 'en') -> bool:
         """Add message to database with duplicate prevention"""
         try:
@@ -356,6 +374,22 @@ def main():
         border-radius: 10px;
         margin-bottom: 15px;
     }
+    
+    .leave-button {
+        background: linear-gradient(135deg, #ff6b6b, #ee5a52) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        padding: 8px 16px !important;
+        font-weight: bold !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .leave-button:hover {
+        background: linear-gradient(135deg, #ff5252, #f44336) !important;
+        transform: translateY(-2px) !important;
+        box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4) !important;
+    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -397,6 +431,21 @@ def main():
     with st.sidebar:
         st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
         st.markdown(f"### 👤 Welcome, {username}!")
+        
+        # Leave button at the top
+        if st.button("🚪 Leave Chat", key="leave_button", help="Leave the chat and go offline"):
+            if db_manager.remove_user(username):
+                # Clear session state
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.success("👋 You have left the chat successfully!")
+                st.balloons()
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.error("Error leaving chat. Please try again.")
+        
+        st.markdown("---")
         
         # Settings
         st.markdown("### ⚙️ Settings")
