@@ -368,7 +368,12 @@ def main():
         margin-bottom: 30px;
     }
     
-    
+    .message-container {
+        padding: 12px;
+        margin: 8px 0;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        # background: linear-gradient(145deg, #f8f9fa, #e9ecef);
     }
     
     .user-message {
